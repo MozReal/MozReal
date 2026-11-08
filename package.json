@@ -1,0 +1,16 @@
+{
+  "name": "saraban-ledger",
+  "version": "1.0.0",
+  "description": "ระบบสมุดคุมเลขรับ-เลขส่ง และสมุดคุมเลขรับคำร้องทั่วไป (ระบบราชการ)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node launcher.js",
+    "dev": "node --disable-warning=ExperimentalWarning server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "UNLICENSED"
+}
