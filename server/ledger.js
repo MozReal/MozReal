@@ -64,22 +64,54 @@ function allocate(book, count) {
   return { first, last, book: fresh };
 }
 
-/** ออกเลขทันที พร้อมรายละเอียด */
+const MAX_BATCH = 50;
+
+/**
+ * ออกเลขทันที พร้อมรายละเอียด
+ * input.recipients (อาร์เรย์) = ส่งเรื่องเดียวกันถึงหลายราย → ออกเลขเรียงกัน 1 รายต่อ 1 เลข
+ * (ตรงกับการใช้งานจริงที่ลงทะเบียนส่งเรื่องเดียวกันถึงหลายหน่วยงานต่อเนื่องกัน)
+ * คืนค่ารายการเดียว หรืออาร์เรย์เมื่อออกหลายเลข
+ */
 export function issueNow(bookId, user, input) {
+  const list = Array.isArray(input.recipients)
+    ? input.recipients.map((r) => String(r ?? '').trim()).filter(Boolean)
+    : null;
+  if (list && list.length > MAX_BATCH) fail(400, `ออกเลขได้ครั้งละไม่เกิน ${MAX_BATCH} ราย`);
+  if (list && !list.length) fail(400, 'กรุณาระบุผู้รับอย่างน้อย 1 ราย');
   return tx(() => {
     const b = getBook(bookId);
-    const data = cleanFields(b.type, input);
-    requireFields(b.type, data);
-    const { first } = allocate(b, 1);
+    const base = cleanFields(b.type, input);
+    const rows = list ? list.map((r) => ({ ...base, recipient: r.slice(0, 300) })) : [base];
+    rows.forEach((d) => requireFields(b.type, d));
+    const { first } = allocate(b, rows.length);
     const now = bkkNow();
-    if (b.type === 'send') data.doc_ref = sendRef(b, first);
-    const cols = Object.keys(data);
-    const r = db.prepare(`INSERT INTO entries(book_id, no, entry_date, entry_time, status, mode, reserved_by, reserved_name, created_by, created_at, filled_at, updated_at${cols.map((c) => ', ' + c).join('')})
-      VALUES (?,?,?,?, 'filled', 'issue', ?, ?, ?, ?, ?, ?${cols.map(() => ', ?').join('')})`)
-      .run(b.id, first, now.date, now.time, user.id, user.full_name, user.id, Date.now(), Date.now(), Date.now(), ...cols.map((c) => data[c]));
-    log(r.lastInsertRowid, user, 'issue', { no: first });
-    return getEntry(r.lastInsertRowid);
+    const out = rows.map((data, i) => {
+      const no = first + i;
+      if (b.type === 'send') data.doc_ref = sendRef(b, no);
+      const cols = Object.keys(data);
+      const r = db.prepare(`INSERT INTO entries(book_id, no, entry_date, entry_time, status, mode, reserved_by, reserved_name, created_by, created_at, filled_at, updated_at${cols.map((c) => ', ' + c).join('')})
+        VALUES (?,?,?,?, 'filled', 'issue', ?, ?, ?, ?, ?, ?${cols.map(() => ', ?').join('')})`)
+        .run(b.id, no, now.date, now.time, user.id, user.full_name, user.id, Date.now(), Date.now(), Date.now(), ...cols.map((c) => data[c]));
+      log(r.lastInsertRowid, user, 'issue', { no });
+      return getEntry(r.lastInsertRowid);
+    });
+    return list ? out : out[0];
   });
+}
+
+/** คำแนะนำจากข้อมูลที่เคยกรอกในเล่มนี้ (ช่วยกรอกค่าที่ซ้ำบ่อย เช่น จาก "อบต." / การปฏิบัติ "กองช่าง") */
+export function suggestions(bookId) {
+  const b = getBook(bookId);
+  const out = {};
+  for (const f of BOOK_TYPES[b.type].fields) {
+    if (!f.suggest) continue;
+    out[f.key] = db.prepare(`SELECT ${f.key} v, COUNT(*) c, MAX(id) m FROM entries WHERE book_id = ? AND status = 'filled' AND COALESCE(${f.key}, '') <> ''
+      GROUP BY ${f.key} ORDER BY m DESC LIMIT 40`).all(b.id).map((r) => r.v);
+  }
+  const last = db.prepare("SELECT * FROM entries WHERE book_id = ? AND status = 'filled' ORDER BY no DESC LIMIT 1").get(b.id) || null;
+  const prev = {};
+  if (last) for (const k of fieldsOf(b.type)) if (k !== 'doc_ref' || b.type !== 'send') prev[k] = last[k] ?? '';
+  return { values: out, last: last ? prev : null, lastNo: last?.no ?? null };
 }
 
 /** จองเลข: ล็อกเลขล่าสุดของวันที่จอง แล้วกรอกรายละเอียดภายหลัง (ไม่นับเป็นการแก้ไข) */

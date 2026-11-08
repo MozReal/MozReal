@@ -7,7 +7,7 @@ import {
   isSetupDone, setAdminPin, checkPin, elevate, validPin,
 } from './auth.js';
 import {
-  getBook, bookSummary, issueNow, reserve, updateEntry, cancelEntry, entryDetail, addSignature, canModify, nextNo,
+  getBook, bookSummary, issueNow, suggestions, reserve, updateEntry, cancelEntry, entryDetail, addSignature, canModify, nextNo,
 } from './ledger.js';
 import { tgCall, sendDaily, sendMessage, detectChats, notifyNewMember, buildDailyMessage } from './telegram.js';
 import * as updater from './updater.js';
@@ -155,6 +155,7 @@ api.get('/api/books/:id/entries', (ctx) => {
   return { book: bookSummary(b), total, page, limit, rows, uid };
 });
 
+api.get('/api/books/:id/suggest', (ctx) => { canView(ctx); return suggestions(ctx.params.id); });
 api.post('/api/books/:id/issue', (ctx) => issueNow(ctx.params.id, requireUser(ctx), ctx.body));
 api.post('/api/books/:id/reserve', (ctx) => reserve(ctx.params.id, requireUser(ctx), ctx.body));
 

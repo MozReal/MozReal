@@ -82,3 +82,22 @@ test('แจ้งเตือน: เฉพาะจันทร์–ศุก
   setSetting('lastDaily', '2026-11-11');
   assert.equal(at('2026-11-11', '09:00', 3), false);
 });
+
+test('ทะเบียนส่งตามแบบจริง: เรื่องเดียวกันถึงหลายราย ออกเลขเรียงกัน + ที่ ต่อรหัสหน่วยงาน', () => {
+  const u = user('c');
+  const bk = db.prepare("INSERT INTO books(type, name, year, prefix, start_no) VALUES ('send', 'ส่ง อบต.', 2569, 'ปท 72403/', 1235)").run().lastInsertRowid;
+  const rows = ledger.issueNow(bk, u, {
+    sender: 'อบต.', action: 'กองช่าง', subject: 'การตรวจสอบภาษีอาคารตามมาตรา 32 ทวิ',
+    recipients: ['บริษัท นีโอ แฟคทอรี่ จำกัด', '  ', 'บริษัท สินอุดม คอนกรีต จำกัด'],
+  });
+  assert.deepEqual(rows.map((r) => [r.no, r.doc_ref, r.recipient]), [
+    [1235, 'ปท 72403/1235', 'บริษัท นีโอ แฟคทอรี่ จำกัด'],
+    [1236, 'ปท 72403/1236', 'บริษัท สินอุดม คอนกรีต จำกัด'],
+  ]);
+  const s = ledger.suggestions(bk);
+  assert.equal(s.last.sender, 'อบต.');
+  assert.equal(s.last.action, 'กองช่าง');
+  assert.equal(s.lastNo, 1236);
+  assert.ok(s.values.recipient.includes('บริษัท นีโอ แฟคทอรี่ จำกัด'));
+  assert.throws(() => ledger.issueNow(bk, u, { subject: 'x', recipients: [] }), /อย่างน้อย 1 ราย/);
+});

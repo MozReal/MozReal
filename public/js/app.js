@@ -389,15 +389,22 @@ async function viewMine() {
 // ======================================================================
 // ฟอร์มออกเลข / จองเลข / ลงรายละเอียด
 // ======================================================================
-function entryFields(type, values = {}) {
+let dlSeq = 0;
+/** ช่องกรอกตามแบบสมุด + รายการแนะนำจากข้อมูลที่เคยกรอก (datalist) */
+function entryFields(type, values = {}, sug = null) {
   return BOOK_TYPES[type].fields.map((f) => {
     const v = values[f.key] ?? '';
+    const list = sug?.values?.[f.key]?.length ? `dl${++dlSeq}` : null;
     const input = f.wide && f.key !== 'subject'
       ? h('textarea', { name: f.key, rows: 2, placeholder: f.placeholder || '' }, v)
-      : h('input', { name: f.key, type: f.type || 'text', value: v, placeholder: f.placeholder || '', required: !!f.required });
-    return field(f.label, input, { required: f.required, wide: f.wide });
+      : h('input', { name: f.key, type: f.type || 'text', value: v, placeholder: f.placeholder || '', required: !!f.required, list, autocomplete: 'off' });
+    const fl = field(f.label, input, { required: f.required, wide: f.wide });
+    if (list) fl.append(h('datalist', { id: list }, sug.values[f.key].map((x) => h('option', { value: x }))));
+    return fl;
   });
 }
+
+const getSuggest = (bookId) => api(`/api/books/${bookId}/suggest`).catch(() => null);
 
 function ticket(b, entries, title) {
   const first = entries[0], last = entries[entries.length - 1];
@@ -413,33 +420,74 @@ function copyBtn(text) {
   return h('button', { class: 'btn', onclick: () => navigator.clipboard?.writeText(text).then(() => toast('คัดลอกแล้ว')) }, 'คัดลอกเลข');
 }
 
-function issueModal(b) {
+async function issueModal(b) {
   const T = BOOK_TYPES[b.type];
+  const sug = await getSuggest(b.id);
+  // ค่าที่ใช้ซ้ำทุกรายการ (เช่น จาก "อบต." / การปฏิบัติ "กองช่าง") กรอกให้ล่วงหน้าจากรายการล่าสุด
+  const pre = {};
+  for (const f of T.fields) if (f.remember && sug?.last?.[f.key]) pre[f.key] = sug.last[f.key];
+  const multiField = T.fields.find((f) => f.multi);
   openModal(({ el, close }) => {
+    const grid = h('div', { class: 'grid2' });
+    let multi = false;
+    const counter = h('small', { class: 'hint' });
+    const paint = (values) => {
+      grid.replaceChildren(...entryFields(b.type, values, sug));
+      if (multi) {
+        const cell = grid.querySelector(`[name=${multiField.key}]`).closest('.field');
+        const ta = h('textarea', { name: '__multi', rows: 5, required: true, placeholder: 'พิมพ์ 1 บรรทัดต่อ 1 ราย เช่น\nบริษัท ก จำกัด\nบริษัท ข จำกัด' }, values.__multi || '');
+        const upd = () => {
+          const n = ta.value.split('\n').map((x) => x.trim()).filter(Boolean).length;
+          counter.textContent = n ? `จะออก ${n} เลข: ${displayNo(b, b.nextNo)}${n > 1 ? ` – ${displayNo(b, b.nextNo + n - 1)}` : ''} (เลขจริงยืนยันเมื่อบันทึก)` : '';
+        };
+        ta.addEventListener('input', upd);
+        cell.replaceWith(h('label', { class: 'field wide' }, h('span', null, `${multiField.label} (หลายราย — 1 บรรทัด = 1 เลข)`, h('em', null, ' *')), ta, counter));
+        upd();
+      }
+    };
+    paint(pre);
+    const keep = () => Object.fromEntries(new FormData(form).entries());
+    const tools = h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' } },
+      multiField ? h('label', { class: 'switch' }, h('input', { type: 'checkbox', onchange: (e) => { multi = e.target.checked; paint(keep()); } }), 'ส่งเรื่องเดียวกันถึงหลายราย') : null,
+      sug?.last ? h('button', { type: 'button', class: 'btn sm', title: 'คัดลอกจาก/เรื่อง/การปฏิบัติ ของรายการล่าสุด', onclick: () => {
+        const cur = keep();
+        const next = { ...cur };
+        for (const f of T.fields) if (!multiField || f.key !== multiField.key) next[f.key] = sug.last[f.key] || cur[f.key] || '';
+        paint(next);
+      } }, icon('undo'), `ใช้ข้อมูลเดิมจากเลข ${displayNo(b, sug.lastNo)}`) : null);
     const form = h('form', {
       onsubmit: async (e) => {
         e.preventDefault();
         const btn = form.querySelector('button[type=submit]');
         btn.disabled = true;
         try {
-          const entry = await attempt(() => api(`/api/books/${b.id}/issue`, { method: 'POST', body: formData(form) }));
+          const body = keep();
+          if (multi) {
+            body.recipients = String(body.__multi || '').split('\n').map((x) => x.trim()).filter(Boolean);
+            delete body.__multi;
+          }
+          const res = await attempt(() => api(`/api/books/${b.id}/issue`, { method: 'POST', body }));
+          const entries = [res].flat();
+          const entry = entries[0];
           sound.success();
           el.replaceChildren(
-            modalHead('ออกเลขสำเร็จ', b.name, close),
-            ticket(b, [entry], T.noLabel),
+            modalHead(entries.length > 1 ? `ออกเลขสำเร็จ ${entries.length} เลข` : 'ออกเลขสำเร็จ', b.name, close),
+            ticket(b, entries, T.noLabel),
+            entries.length > 1 ? h('div', { class: 'list', style: { marginBottom: '8px' } }, entries.map((x) => h('div', { class: 'list-item', style: { padding: '8px 12px' } },
+              h('b', { class: 'num' }, b.type === 'send' ? `ที่ ${x.doc_ref}` : displayNo(b, x.no)), h('span', { class: 'grow' }, x.recipient || '')))) : null,
             h('div', { class: 'modal-foot' },
-              copyBtn(b.type === 'send' ? entry.doc_ref : displayNo(b, entry.no)),
-              T.canSign ? h('button', { class: 'btn', onclick: () => { close(); signModal(entry); } }, icon('signature'), 'เซ็นรับเลย') : null,
+              copyBtn(entries.map((x) => (b.type === 'send' ? x.doc_ref : displayNo(b, x.no))).join(', ')),
+              T.canSign && entries.length === 1 ? h('button', { class: 'btn', onclick: () => { close(); signModal(entry); } }, icon('signature'), 'เซ็นรับเลย') : null,
               h('button', { class: 'btn primary', onclick: close }, 'เรียบร้อย')));
           afterChange();
         } catch { btn.disabled = false; }
       },
     },
-    h('div', { class: 'grid2' }, entryFields(b.type)),
+    tools, grid,
     h('div', { class: 'modal-foot' },
       h('button', { type: 'button', class: 'btn ghost', onclick: close }, 'ยกเลิก'),
       h('button', { type: 'submit', class: 'btn primary' }, icon('zap'), 'ออกเลข')));
-    return [modalHead(`ออกเลขทันที · ${T.label}`, `${b.name} — เลขถัดไปคือ ${displayNo(b, b.nextNo)} (ระบบจะยืนยันเลขจริงเมื่อบันทึก)`, close), form];
+    return [modalHead(`ออกเลขทันที · ${T.label}`, `${b.name} — เลขถัดไปคือ ${displayNo(b, b.nextNo)}${b.type === 'send' && b.prefix ? ` (ที่ ${b.prefix}${b.nextNo})` : ''}`, close), form];
   }, { size: 'wide' });
 }
 
@@ -483,8 +531,13 @@ function reserveModal(b, { onDone } = {}) {
   }, { size: '' });
 }
 
-function fillModal(e) {
+async function fillModal(e) {
   const b = e.book;
+  const sug = await getSuggest(b.id);
+  if (e.status === 'reserved') {
+    // เลขที่จองไว้: เติมค่าที่ใช้ซ้ำ (จาก/การปฏิบัติ) ให้ถ้ายังว่าง
+    for (const f of BOOK_TYPES[b.type].fields) if (f.remember && !e[f.key] && sug?.last?.[f.key]) e = { ...e, [f.key]: sug.last[f.key] };
+  }
   const T = BOOK_TYPES[b.type];
   const isFill = e.status === 'reserved';
   openModal(({ close }) => {
@@ -501,7 +554,7 @@ function fillModal(e) {
         } catch { btn.disabled = false; }
       },
     },
-    h('div', { class: 'grid2' }, entryFields(b.type, e)),
+    h('div', { class: 'grid2' }, entryFields(b.type, e, sug)),
     h('p', { class: 'hint' }, isFill
       ? `เลขนี้จองไว้เมื่อ ${thaiDate(e.entry_date)} ${e.entry_time} น. โดย ${e.reserved_name} — การกรอกครั้งนี้ไม่นับเป็นการแก้ไข และคงวันที่จองไว้`
       : `การแก้ไขจะถูกบันทึกในประวัติ (แก้ไขแล้ว ${e.edit_count} ครั้ง)`),
@@ -736,10 +789,30 @@ async function printLedger(book, st) {
     ...(T.canSign ? [['ลงชื่อผู้รับ', (e) => sigs[e.id]?.map((s) => `<img src="${s.image}"><div style="text-align:center;font-size:10pt">${esc(s.name)}</div>`).join('') || '', 'raw']] : []),
     ['หมายเหตุ', (e) => (e.status === 'cancelled' ? `ยกเลิก: ${e.cancel_reason || ''}` : e.status === 'reserved' ? `จองโดย ${e.reserved_name}` : e.note)]];
   const area = document.querySelector('.print-area') || document.body.appendChild(h('div', { class: 'print-area' }));
-  area.innerHTML = `<h1>${esc(T.label)}</h1><div class="ph">${esc(S.boot.orgName || '')} · ${esc(book.name)}${st.month ? ` · ${TH_MONTHS[+st.month.slice(5) - 1]} ${book.year}` : ''}</div>
-    <table><thead><tr>${pc.map((c) => `<th>${esc(c[0])}</th>`).join('')}</tr></thead><tbody>
-    ${data.rows.map((e) => `<tr>${pc.map(([, f, m]) => `<td class="${m === 'c' ? 'c' : ''}">${m === 'raw' ? f(e) : esc(f(e) ?? '')}</td>`).join('')}</tr>`).join('')}
-    </tbody></table>`;
+  // แบบเดียวกับสมุดจริง: หัวกระดาษ "ทะเบียนหนังสือ…" ซ้าย และ "วันที่ … เดือน … พ.ศ. …" ขวา แยกตามวันที่ลงทะเบียน
+  const groups = [];
+  for (const e of data.rows) {
+    const g = groups[groups.length - 1];
+    if (g && g.date === e.entry_date) g.rows.push(e); else groups.push({ date: e.entry_date, rows: [e] });
+  }
+  const W = { no: 7, 'ที่': 12, date: 9, 'เรื่อง': 26, 'ถึง': 14, 'จาก': 9 };
+  const width = (label, i) => (i === 0 ? W.no : W[label] || (label === T.dateLabel ? W.date : 10));
+  const headLabel = (l, i) => (i === 0 ? esc(l).replace(/^เลข/, 'เลข<br>') : esc(l));
+  const cellHtml = (e, [label, f, m]) => {
+    if (m === 'raw') return f(e);
+    const v = esc(f(e) ?? '');
+    return label === 'ที่' && book.type === 'send' ? v.replace(/\/(?=[^/]*$)/, '/<br>') : v;
+  };
+  const head = (date) => {
+    const [y, mo, d] = date.split('-').map(Number);
+    return `<div class="pf-head"><b>${esc(T.label)}</b><span>วันที่ <u>&nbsp;${d}&nbsp;</u> เดือน <u>&nbsp;${TH_MONTHS[mo - 1]}&nbsp;</u> พ.ศ. <u>&nbsp;${y + 543}&nbsp;</u></span></div>`;
+  };
+  area.innerHTML = `<div class="ph">${esc(S.boot.orgName || '')} · ${esc(book.name)}${st.month ? ` · ${TH_MONTHS[+st.month.slice(5) - 1]} ${book.year}` : ''}</div>` +
+    (groups.length ? groups : [{ date: bkkNow().date, rows: [] }]).map((g) => `<section class="pf-day">${head(g.date)}
+    <table><colgroup>${pc.map((c, i) => `<col style="width:${width(c[0], i)}%">`).join('')}</colgroup>
+    <thead><tr>${pc.map((c, i) => `<th>${headLabel(c[0], i)}</th>`).join('')}</tr></thead><tbody>
+    ${g.rows.map((e) => `<tr>${pc.map((c) => `<td class="${c[2] === 'c' ? 'c' : ''}">${cellHtml(e, c)}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></section>`).join('');
   setTimeout(() => window.print(), 150);
 }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

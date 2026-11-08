@@ -397,8 +397,12 @@ table.ledger tr.cancelled td.no, table.ledger tr.cancelled td:last-child { text-
   body { background: #fff !important; color: #000 !important; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-size: 13pt; }
   body::before, .aurora, #fx, #app, #toasts, .overlay { display: none !important; }
   .print-area { display: block !important; }
-  .print-area h1 { text-align: center; font-size: 18pt; margin: 0; }
-  .print-area .ph { text-align: center; margin: 2mm 0 5mm; font-size: 13pt; }
+  .print-area .ph { text-align: right; margin: 0 0 2mm; font-size: 10pt; color: #555; }
+  .print-area .pf-day { margin-bottom: 7mm; }
+  .print-area .pf-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5mm; }
+  .print-area .pf-head b { font-size: 15pt; }
+  .print-area .pf-head u { text-decoration: none; border-bottom: 1px dotted #000; }
+  .print-area table { table-layout: fixed; }
   .print-area table { width: 100%; border-collapse: collapse; }
   .print-area th, .print-area td { border: 1px solid #000; padding: 1.5mm 2mm; vertical-align: top; font-size: 12.5pt; }
   .print-area th { font-weight: 600; text-align: center; background: #f2f2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
