@@ -4,17 +4,15 @@ export const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์'
 export const TH_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 export const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
 
-const fmt = new Intl.DateTimeFormat('en-CA', {
-  timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-});
+// ประเทศไทยไม่มีเวลาออมแสง (UTC+7 ตลอดปี) จึงคำนวณตรงได้ ไม่ต้องพึ่ง Intl
+// (ใช้ได้เหมือนกันทั้ง Node.js, เบราว์เซอร์ และ Google Apps Script)
+const p2 = (n) => String(n).padStart(2, '0');
 
 /** คืนค่า { date:'YYYY-MM-DD', time:'HH:MM', dow:0-6, year } ตามเวลาไทย */
 export function bkkNow(d = new Date()) {
-  const p = Object.fromEntries(fmt.formatToParts(d).map((x) => [x.type, x.value]));
-  const date = `${p.year}-${p.month}-${p.day}`;
-  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return { date, time: `${p.hour}:${p.minute}`, seconds: p.second, dow, year: +p.year };
+  const t = new Date(d.getTime() + 7 * 3600e3);
+  const date = `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`;
+  return { date, time: `${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}`, seconds: p2(t.getUTCSeconds()), dow: t.getUTCDay(), year: t.getUTCFullYear() };
 }
 
 export function isoAddDays(iso, n) {

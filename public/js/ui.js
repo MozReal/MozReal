@@ -75,7 +75,31 @@ export function icon(name, cls) {
 }
 
 // ---------------- API ----------------
+// ทำงานได้ 2 แบบ: Node.js (fetch + cookie) และ Google Apps Script (google.script.run + token ใน localStorage)
+export const GAS = typeof google !== 'undefined' && !!google.script?.run;
+const TOKEN_KEY = 'ledger.token';
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
+const setToken = (t) => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {} };
+
+function gasCall(method, path, body) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler((r) => {
+        if (r && r.__error) {
+          const err = new Error(r.__error);
+          err.status = r.status;
+          return reject(err);
+        }
+        if (r && '__token' in r) { setToken(r.__token); delete r.__token; }
+        resolve(r);
+      })
+      .withFailureHandler((e) => reject(new Error(e?.message || String(e))))
+      .api(method, path, body || null, getToken());
+  });
+}
+
 export async function api(path, { method = 'GET', body } = {}) {
+  if (GAS) return gasCall(method, path, body);
   const res = await fetch(path, {
     method, credentials: 'same-origin',
     headers: body ? { 'content-type': 'application/json' } : {},
@@ -88,6 +112,21 @@ export async function api(path, { method = 'GET', body } = {}) {
     throw err;
   }
   return data;
+}
+
+/** ดาวน์โหลดไฟล์จาก API (CSV / ไฟล์สำรอง) */
+export async function download(path) {
+  if (!GAS) { location.href = path; return; }
+  const r = await gasCall('GET', path);
+  if (r.__link) { window.open(r.__link, '_blank'); return r; }
+  const blob = new Blob([r.text], { type: r.type || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = r.filename || 'download';
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  return r;
 }
 
 // ---------------- toast ----------------

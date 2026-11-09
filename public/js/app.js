@@ -1,4 +1,4 @@
-import { h, icon, api, toast, attempt, openModal, modalHead, confirmBox, field, formData, closeAllModals } from './ui.js';
+import { h, icon, api, download, GAS, toast, attempt, openModal, modalHead, confirmBox, field, formData, closeAllModals } from './ui.js';
 import { THEMES, FESTIVAL_THEMES, applyTheme, getTheme } from './themes.js';
 import * as sound from './sound.js';
 import { initSpotlight, setParticles } from './effects.js';
@@ -200,7 +200,8 @@ function viewSetup() {
       await attempt(() => api('/api/setup', { method: 'POST', body: formData(form) }), 'ตั้งค่าระบบเรียบร้อย');
       sound.success();
       await refreshSession();
-      go('/admin/members');
+      await loadBooks().catch(() => {});
+      go('/admin');
     },
   },
   field('ชื่อหน่วยงาน', h('input', { name: 'orgName', required: true, placeholder: 'เช่น โรงเรียน… / สำนักงาน…' }), { required: true }),
@@ -287,7 +288,7 @@ function pinForm(after) {
 function viewPin() {
   return h('div', { class: 'auth-card glass spot' }, brandBig(),
     h('h1', null, 'ผู้ดูแลระบบ'), h('p', { class: 'lead' }, 'ใส่ PIN เพื่ออนุมัติสมาชิกและตั้งค่าระบบ'),
-    pinForm(() => { location.hash === '#/admin/members' ? render() : go('/admin/members'); }),
+    pinForm(() => { location.hash === '#/admin' ? render() : go('/admin'); }),
     h('div', { class: 'auth-links' }, h('a', { href: '#/login' }, '← กลับไปหน้าเข้าสู่ระบบ')));
 }
 
@@ -765,7 +766,7 @@ async function viewBook(r) {
       h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', flex: '1', justifyContent: 'flex-end' } },
         search, monthSel,
         h('button', { class: 'btn icon', title: 'พิมพ์ทะเบียน', onclick: () => printLedger(book, st) }, icon('printer')),
-        h('a', { class: 'btn icon', title: 'ส่งออก CSV (Excel)', href: `/api/books/${id}/export.csv` }, icon('download')))),
+        h('button', { class: 'btn icon', title: 'ส่งออก CSV (Excel)', onclick: () => attempt(() => download(`/api/books/${id}/export.csv`)) }, icon('download')))),
     tableBox,
   ];
 }
@@ -930,16 +931,60 @@ async function viewAdmin(r) {
         h('h1', { style: { textAlign: 'center' } }, 'ผู้ดูแลระบบ'), h('p', { class: 'lead', style: { textAlign: 'center' } }, 'ใส่ PIN เพื่อเข้าสู่ส่วนผู้ดูแล'),
         pinForm(() => render())));
   }
-  const tab = r.params.tab || 'members';
-  const TABS = [['members', 'users', 'สมาชิก', 'pendingMembers'], ['books', 'book', 'สมุดทะเบียน'], ['notify', 'telegram', 'แจ้งเตือน Telegram'], ['system', 'settings', 'ระบบและอัพเดต', 'updates']];
-  const body = await ({ members: adminMembers, books: adminBooks, notify: adminNotify, system: adminSystem }[tab] || adminMembers)();
+  const tab = r.params.tab || 'overview';
+  const TABS = [['overview', 'sparkles', 'ภาพรวม'], ['members', 'users', 'สมาชิก', 'pendingMembers'], ['books', 'book', 'สมุดทะเบียน'], ['notify', 'telegram', 'แจ้งเตือน Telegram'], ['system', 'settings', 'ระบบและอัพเดต', 'updates']];
+  const body = await ({ overview: adminOverview, members: adminMembers, books: adminBooks, notify: adminNotify, system: adminSystem }[tab] || adminOverview)();
   return [
     h('div', { class: 'topbar' },
       h('div', null, h('h1', null, 'ผู้ดูแลระบบ'), h('div', { class: 'sub' }, 'สิทธิ์ผู้ดูแลจะล็อกอัตโนมัติเมื่อไม่ใช้งาน 30 นาที')),
       h('div', { class: 'tools' }, h('button', { class: 'btn', onclick: async () => { await api('/api/admin/lock', { method: 'POST' }); await refreshSession(); S.user ? go('/') : go('/login'); } }, icon('lock'), 'ล็อกผู้ดูแล'))),
-    h('nav', { class: 'tabs' }, TABS.map(([k, ic, l, badge]) => h('a', { href: `#/admin/${k}`, class: k === tab ? 'on' : '', 'data-badge': badge }, icon(ic), l))),
+    h('nav', { class: 'tabs' }, TABS.map(([k, ic, l, badge]) => h('a', { href: `#/admin/${k}`, class: k === tab || (k === 'overview' && !TABS.some((t) => t[0] === tab)) ? 'on' : '', 'data-badge': badge }, icon(ic), l))),
     body,
   ];
+}
+
+async function adminOverview() {
+  const o = await api('/api/admin/overview');
+  const tile = (label, n, ic, opts = {}) => h(opts.href ? 'a' : 'div', { class: `stat glass spot${opts.alert && n ? ' alert' : ''}`, href: opts.href },
+    h('span', { class: 'stat-ic' }, icon(ic)), h('b', { class: 'num' }, n), h('small', null, label));
+  const days = (iso) => Math.round((Date.parse(o.today) - Date.parse(iso)) / 864e5);
+  const noOf = (x) => displayNo({ type: x.book_type, year: x.book_year }, x.no);
+  const tg = o.telegram;
+  return h('div', { class: 'row-gap' },
+    h('div', { class: 'stats' },
+      tile('สมาชิกที่ใช้งาน', o.counts.members, 'users'),
+      tile('รออนุมัติ', o.counts.pendingMembers, 'bell', { href: '#/admin/members', alert: true }),
+      tile('เลขที่ออกวันนี้', o.counts.today, 'zap'),
+      tile('เลขจองค้าง', o.counts.reserved, 'bookmark', { alert: true }),
+      tile('รอเซ็นรับ', o.counts.unsigned, 'signature'),
+      tile('รายการทั้งหมด', o.counts.entries, 'book')),
+    h('div', { class: 'cols' },
+      h('section', { class: 'glass panel' },
+        h('h2', null, icon('clock'), 'ประวัติการใช้งานล่าสุด'),
+        o.activity.length ? h('ul', { class: 'timeline' }, o.activity.map((l) => h('li', { class: l.action },
+          h('b', null, ACTION_LABEL[l.action] || l.action), ` · ${BOOK_TYPES[l.book_type]?.short || ''} `,
+          h('a', { href: 'javascript:void 0', onclick: () => openEntry(l.entry_id) }, noOf(l)), ` · ${l.actor || ''}`,
+          h('small', null, `${l.book_name} · ${thaiDateTime(l.at, { short: true })}`))))
+          : h('p', { class: 'hint' }, 'ยังไม่มีการใช้งาน')),
+      h('div', { class: 'row-gap', style: { alignContent: 'start' } },
+        h('section', { class: 'glass panel' },
+          h('h2', null, icon('bookmark'), 'เลขจองค้างทั้งระบบ', o.reservations.length ? h('span', { class: 'dot count' }, o.reservations.length) : null),
+          o.reservations.length ? h('div', { class: 'list' }, o.reservations.map((x) => {
+            const age = days(x.entry_date);
+            return h('div', { class: 'list-item', style: { padding: '10px 14px' } },
+              h('div', { class: 'grow' }, h('b', null, `${BOOK_TYPES[x.book_type]?.short || ''} ${noOf(x)}`), ' ',
+                age >= 3 ? h('span', { class: 'chip red' }, `ค้าง ${age} วัน`) : age > 0 ? h('span', { class: 'chip amber' }, `${age} วัน`) : h('span', { class: 'chip' }, 'วันนี้'),
+                h('small', null, `${x.reserved_name} · ${thaiDate(x.entry_date, { short: true })}${x.subject ? ` · ${x.subject}` : ''}`)),
+              h('button', { class: 'btn sm', onclick: () => openEntry(x.id) }, 'เปิด'));
+          })) : h('p', { class: 'hint' }, 'ไม่มีเลขที่จองค้าง')),
+        h('section', { class: 'glass panel' },
+          h('h2', null, icon('settings'), 'สถานะระบบ'),
+          h('dl', { class: 'kv' },
+            h('dt', null, 'Telegram'), h('dd', null, tg.configured ? (tg.enabled ? `เปิดแจ้งเตือน ${tg.time} น. (จ.–ศ.)` : 'ปิดแจ้งเตือนประจำวัน') : h('a', { href: '#/admin/notify' }, 'ยังไม่ได้ตั้งค่า →')),
+            tg.triggers === false ? [h('dt', null, 'ตัวตั้งเวลา'), h('dd', null, h('a', { href: '#/admin/notify' }, 'ยังไม่ได้ติดตั้ง →'))] : null,
+            h('dt', null, 'ส่งล่าสุด'), h('dd', null, tg.last || '—'),
+            h('dt', null, 'อัพเดต'), h('dd', null, o.updates ? h('a', { href: '#/admin/system' }, `มี ${o.updates} รายการรอติดตั้ง →`) : 'เป็นเวอร์ชันล่าสุด'),
+            h('dt', null, 'เวอร์ชัน'), h('dd', null, `v${S.boot.version}${GAS ? ' · Google Apps Script' : ' · Node.js'}`))))));
 }
 
 async function adminMembers() {
@@ -1040,7 +1085,7 @@ async function adminNotify() {
         openModal(({ close }) => [modalHead('เลือกแชท', 'แชทที่บอทได้รับข้อความล่าสุด', close),
           h('div', { class: 'list' }, chats.map((c) => h('button', { class: 'list-item btn', style: { justifyContent: 'flex-start' }, onclick: () => { form.elements.tgChatId.value = c.id; close(); } }, h('b', null, c.title || c.id), h('small', null, `${c.type} · ${c.id}`))))], { size: 'narrow' });
       } }, 'ค้นหา')), { hint: 'พิมพ์ /start ในกลุ่มแล้วกด "ค้นหา"' }),
-    field('ที่อยู่เว็บของระบบ (สำหรับลิงก์จองเลข)', h('input', { name: 'baseUrl', value: s.baseUrl || location.origin, placeholder: 'https://saraban.example.go.th' }), { hint: 'ปุ่มลิงก์ใน Telegram ต้องเป็นที่อยู่ที่เปิดได้จากมือถือ (ถ้าเป็น localhost ระบบจะส่งเป็นลิงก์ในข้อความแทน)' }),
+    field('ที่อยู่เว็บของระบบ (สำหรับลิงก์จองเลข)', h('input', { name: 'baseUrl', value: s.baseUrl || (GAS ? '' : location.origin), placeholder: 'https://saraban.example.go.th' }), { hint: GAS ? 'เว้นว่างได้ — ระบบใช้ลิงก์เว็บแอป Apps Script ให้อัตโนมัติ' : 'ปุ่มลิงก์ใน Telegram ต้องเป็นที่อยู่ที่เปิดได้จากมือถือ (ถ้าเป็น localhost ระบบจะส่งเป็นลิงก์ในข้อความแทน)' }),
     field('เวลาแจ้งเตือนประจำวัน (จันทร์–ศุกร์)', h('input', { name: 'notifyTime', type: 'time', value: s.notifyTime || '08:30', required: true })),
     field('วันหยุดราชการที่ไม่ต้องแจ้งเตือน (YYYY-MM-DD บรรทัดละวัน)', h('textarea', { name: 'holidays', rows: 3, placeholder: '2026-12-07\n2026-12-10' }, s.holidays), { wide: true }),
     h('div', { class: 'wide', style: { display: 'flex', gap: '22px', flexWrap: 'wrap' } },
@@ -1051,7 +1096,8 @@ async function adminNotify() {
   h('div', { class: 'modal-foot', style: { justifyContent: 'flex-start' } },
     h('button', { class: 'btn primary' }, icon('check'), 'บันทึก'),
     h('button', { type: 'button', class: 'btn', onclick: () => attempt(() => api('/api/admin/telegram/test', { method: 'POST' }), 'ส่งข้อความทดสอบแล้ว') }, icon('telegram'), 'ทดสอบการเชื่อมต่อ'),
-    h('button', { type: 'button', class: 'btn', onclick: () => attempt(() => api('/api/admin/telegram/daily', { method: 'POST' }), 'ส่งสรุปประจำวันแล้ว') }, icon('send'), 'ส่งสรุปเลขตอนนี้')));
+    h('button', { type: 'button', class: 'btn', onclick: () => attempt(() => api('/api/admin/telegram/daily', { method: 'POST' }), 'ส่งสรุปประจำวันแล้ว') }, icon('send'), 'ส่งสรุปเลขตอนนี้'),
+    GAS ? h('button', { type: 'button', class: 'btn', title: 'ตัวตั้งเวลาของ Google Apps Script สำหรับแจ้งเตือนทุกเช้า', onclick: async () => { await attempt(() => api('/api/admin/triggers', { method: 'POST' }), 'ติดตั้งตัวตั้งเวลาแล้ว'); render({ soft: true }); } }, icon('clock'), s.triggers ? 'ติดตั้งตัวตั้งเวลาใหม่' : 'ติดตั้งตัวตั้งเวลา') : null));
   loadPreview();
   return h('div', { class: 'cols' },
     h('section', { class: 'glass panel' }, h('h2', null, icon('telegram'), 'Telegram Bot'), form),
@@ -1067,7 +1113,7 @@ async function adminSystem() {
       h('dl', { class: 'kv' },
         h('dt', null, 'เวอร์ชัน'), h('dd', null, `v${st.version}`, st.commit ? [' ', h('span', { class: 'commit' }, st.commit)] : null, st.branch ? ` · ${st.branch}` : ''),
         h('dt', null, 'ตรวจล่าสุด'), h('dd', null, st.lastCheck ? thaiDateTime(+st.lastCheck, { short: true }) : 'ยังไม่เคยตรวจ')),
-      !st.git ? h('p', { class: 'hint' }, 'ระบบนี้ไม่ได้ติดตั้งผ่าน git — อัพเดตโดยคัดลอกไฟล์เวอร์ชันใหม่ทับ (ข้อมูลในโฟลเดอร์ data จะไม่หาย)') : null,
+      !st.git ? h('p', { class: 'hint' }, st.note || 'ระบบนี้ไม่ได้ติดตั้งผ่าน git — อัพเดตโดยคัดลอกไฟล์เวอร์ชันใหม่ทับ (ข้อมูลในโฟลเดอร์ data จะไม่หาย)') : st.note ? h('p', { class: 'hint' }, st.note) : null,
       st.dirty ? h('p', { class: 'hint', style: { color: 'var(--warn)' } }, 'มีไฟล์ระบบถูกแก้ไขในเครื่อง ระบบจะไม่ติดตั้งอัพเดตอัตโนมัติเพื่อป้องกันไฟล์เสียหาย') : null,
       st.pending.length ? [
         h('div', { class: 'sec-title' }, icon('rocket'), `อัพเดตใหม่รอการยืนยัน (${st.pending.length})`),
@@ -1079,7 +1125,7 @@ async function adminSystem() {
           if (!(await confirmBox('ติดตั้งอัพเดต', 'ระบบจะสำรองฐานข้อมูล ติดตั้งเวอร์ชันใหม่ แล้วรีสตาร์ทประมาณ 5–10 วินาที', { ok: 'ติดตั้งเลย' }))) return;
           const r = await attempt(() => api('/api/admin/update/apply', { method: 'POST' }));
           toast(`ติดตั้งแล้ว (${r.before} → ${r.after}) กำลังรีสตาร์ท…`, 'info');
-          setTimeout(() => location.reload(), 8000);
+          if (r.reloadHint) toast(r.reloadHint, 'info'); else setTimeout(() => location.reload(), 8000);
         } }, icon('rocket'), 'ติดตั้งอัพเดตตอนนี้') : null)].flat().filter(Boolean));
   };
   paintUpdate().catch((e) => upBox.replaceChildren(h('p', { class: 'hint' }, e.message)));
@@ -1096,7 +1142,7 @@ async function adminSystem() {
     field('ชื่อหน่วยงาน', h('input', { name: 'orgName', value: s.orgName, required: true }), { wide: true }),
     field('บังคับธีมเทศกาล (ทุกคน)', h('select', { name: 'festivalForce' }, h('option', { value: '' }, '— ไม่บังคับ (อัตโนมัติตามวันที่) —'),
       Object.entries(FESTIVAL_THEMES).map(([k, t]) => h('option', { value: k, selected: s.festivalForce === k }, t.name)))),
-    field('สาขา git สำหรับอัพเดต', h('input', { name: 'updateBranch', value: s.updateBranch, placeholder: 'เว้นว่าง = สาขาปัจจุบัน' })),
+    GAS ? null : field('สาขา git สำหรับอัพเดต', h('input', { name: 'updateBranch', value: s.updateBranch, placeholder: 'เว้นว่าง = สาขาปัจจุบัน' })),
     h('label', { class: 'switch wide' }, h('input', { type: 'checkbox', name: 'festivalAuto', checked: s.festivalAuto === '1' }), 'เปิดธีมเทศกาลอัตโนมัติ (ก่อนถึงวัน 7 วัน และกลับเองหลังจบวันเทศกาล)')),
   h('div', { class: 'modal-foot', style: { justifyContent: 'flex-start' } }, h('button', { class: 'btn primary' }, 'บันทึก')));
 
@@ -1119,8 +1165,10 @@ async function adminSystem() {
     h('div', { class: 'cols' },
       h('section', { class: 'glass panel' }, h('h2', null, icon('shield'), 'PIN ผู้ดูแลระบบ'), pinF),
       h('section', { class: 'glass panel' }, h('h2', null, icon('database'), 'สำรองข้อมูล'),
-        h('p', { class: 'hint', style: { marginTop: 0 } }, 'ดาวน์โหลดไฟล์ฐานข้อมูลทั้งหมด (สมาชิก สมุด เลข ลายเซ็น) เก็บไว้เป็นระยะ ระบบจะสำรองให้อัตโนมัติก่อนติดตั้งอัพเดตทุกครั้ง'),
-        h('a', { class: 'btn', href: '/api/admin/backup' }, icon('download'), 'ดาวน์โหลดไฟล์สำรอง'))));
+        h('p', { class: 'hint', style: { marginTop: 0 } }, GAS ? 'สร้างสำเนา Google Sheets ของฐานข้อมูลทั้งหมด (สมาชิก สมุด เลข ลายเซ็น) ไว้ใน Google Drive ระบบจะสำรองให้อัตโนมัติก่อนติดตั้งอัพเดตทุกครั้ง' : 'ดาวน์โหลดไฟล์ฐานข้อมูลทั้งหมด (สมาชิก สมุด เลข ลายเซ็น) เก็บไว้เป็นระยะ ระบบจะสำรองให้อัตโนมัติก่อนติดตั้งอัพเดตทุกครั้ง'),
+        h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
+          h('button', { class: 'btn', onclick: () => attempt(() => download('/api/admin/backup'), GAS ? 'สร้างสำเนาสำรองใน Google Drive แล้ว' : null) }, icon('download'), GAS ? 'สร้างสำเนาสำรอง' : 'ดาวน์โหลดไฟล์สำรอง'),
+          s.sheetUrl ? h('a', { class: 'btn', href: s.sheetUrl, target: '_blank', rel: 'noopener' }, icon('database'), 'เปิดฐานข้อมูล (Google Sheets)') : null))));
 }
 
 // ======================================================================
@@ -1129,6 +1177,11 @@ async function adminSystem() {
 (async function start() {
   initSpotlight();
   applyLook();
+  // Apps Script: ลิงก์จาก Telegram มาในรูป ?p=reserve/2 → แปลงเป็นหน้าในระบบ
+  if (GAS && google.script.url) {
+    const p = await new Promise((res) => google.script.url.getLocation((loc) => res(loc.parameter?.p || ''))).catch(() => '');
+    if (p && /^[\w/-]+$/.test(p)) location.hash = `#/${p.replace(/^\/+/, '')}`;
+  }
   try {
     await refreshSession();
     if (S.user || S.isAdmin) await Promise.all([loadBooks(), loadBadges()]);

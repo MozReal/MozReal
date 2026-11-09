@@ -348,6 +348,16 @@ table.ledger tr.cancelled td.no, table.ledger tr.cancelled td:last-child { text-
 .tg-preview { white-space: pre-wrap; font-size: 13.5px; padding: 14px 16px; border-radius: 4px 18px 18px 18px; background: color-mix(in srgb, #2aabee 12%, var(--surface-solid)); border: 1px solid color-mix(in srgb, #2aabee 30%, transparent); }
 .tg-preview .tgb { display: block; margin-top: 6px; text-align: center; padding: 7px; border-radius: 10px; background: color-mix(in srgb, #2aabee 22%, transparent); font-size: 13px; color: #1679b5; font-weight: 600; }
 
+/* ---------- สถิติผู้ดูแล ---------- */
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
+.stat { padding: 16px 18px; border-radius: 20px; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; color: var(--text); }
+.stat .stat-ic { grid-row: 1 / 3; width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.stat .stat-ic svg { width: 21px; height: 21px; }
+.stat b { font-size: 26px; line-height: 1.1; }
+.stat small { color: var(--muted); font-size: 12.5px; }
+.stat.alert .stat-ic { color: var(--danger); background: color-mix(in srgb, var(--danger) 13%, transparent); }
+.stat.alert b { color: var(--danger); }
+
 /* ---------- toast ---------- */
 #toasts { position: fixed; z-index: 100; right: 22px; bottom: 22px; display: grid; gap: 10px; }
 .toast { padding: 13px 18px; border-radius: 16px; display: flex; gap: 10px; align-items: center; min-width: 260px; max-width: 420px; animation: pop .4s var(--spring); background: color-mix(in srgb, var(--surface-solid) 94%, transparent); }

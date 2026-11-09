@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node launcher.js",
     "dev": "node --disable-warning=ExperimentalWarning server/index.js",
+    "build:gas": "node gas/build.mjs",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
   },
   "license": "UNLICENSED"

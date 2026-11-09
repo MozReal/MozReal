@@ -391,3 +391,30 @@ api.get('/api/admin/stats', (ctx) => {
 });
 
 export { SETTING_DEFAULTS };
+
+// ภาพรวมสำหรับผู้ดูแล: สถิติ งานค้าง และประวัติการใช้งานล่าสุดทั้งระบบ
+api.get('/api/admin/overview', (ctx) => {
+  requireAdmin(ctx);
+  const today = bkkNow().date;
+  const c = (sql, ...a) => db.prepare(sql).get(...a).c;
+  const counts = {
+    members: c("SELECT COUNT(*) c FROM users WHERE status = 'active'"),
+    pendingMembers: c("SELECT COUNT(*) c FROM users WHERE status = 'pending'"),
+    openBooks: c("SELECT COUNT(*) c FROM books WHERE status = 'open'"),
+    entries: c('SELECT COUNT(*) c FROM entries'),
+    today: c('SELECT COUNT(*) c FROM entries WHERE entry_date = ?', today),
+    reserved: c("SELECT COUNT(*) c FROM entries WHERE status = 'reserved'"),
+    unsigned: c(`SELECT COUNT(*) c FROM entries e JOIN books b ON b.id = e.book_id WHERE b.type = 'receive' AND e.status = 'filled'
+      AND NOT EXISTS (SELECT 1 FROM signatures s WHERE s.entry_id = e.id)`),
+  };
+  const reservations = db.prepare(`SELECT e.id, e.no, e.entry_date, e.entry_time, e.reserved_name, e.subject, b.name AS book_name, b.type AS book_type, b.year AS book_year
+    FROM entries e JOIN books b ON b.id = e.book_id WHERE e.status = 'reserved' ORDER BY e.entry_date, e.no LIMIT 100`).all();
+  const activity = db.prepare(`SELECT l.id, l.actor, l.action, l.at, l.detail, e.id AS entry_id, e.no, b.name AS book_name, b.type AS book_type, b.year AS book_year
+    FROM entry_logs l JOIN entries e ON e.id = l.entry_id JOIN books b ON b.id = e.book_id ORDER BY l.at DESC, l.id DESC LIMIT 60`).all();
+  let updates = 0;
+  try { updates = JSON.parse(getSetting('updatePending') || '[]').length; } catch {}
+  return {
+    today, counts, reservations, activity, updates,
+    telegram: { configured: !!(getSetting('tgToken') && getSetting('tgChatId')), enabled: getSetting('notifyEnabled') === '1', time: getSetting('notifyTime'), last: getSetting('lastDailyResult') },
+  };
+});
