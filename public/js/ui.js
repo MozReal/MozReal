@@ -98,7 +98,7 @@ function gasCall(method, path, body) {
   });
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+async function rawApi(path, { method = 'GET', body } = {}) {
   if (GAS) return gasCall(method, path, body);
   const res = await fetch(path, {
     method, credentials: 'same-origin',
@@ -117,7 +117,7 @@ export async function api(path, { method = 'GET', body } = {}) {
 /** ดาวน์โหลดไฟล์จาก API (CSV / ไฟล์สำรอง) */
 export async function download(path) {
   if (!GAS) { location.href = path; return; }
-  const r = await gasCall('GET', path);
+  const r = await track('GET', path, () => gasCall('GET', path), 'กำลังเตรียมไฟล์…');
   if (r.__link) { window.open(r.__link, '_blank'); return r; }
   const blob = new Blob([r.text], { type: r.type || 'text/plain' });
   const a = document.createElement('a');
@@ -127,6 +127,90 @@ export async function download(path) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   return r;
+}
+
+// ---------------- สถานะการรอ (กันผู้ใช้คิดว่าค้างและกดซ้ำ) ----------------
+// - ทุกคำขอ: แถบความคืบหน้าด้านบนจอ
+// - คำสั่งที่บันทึกข้อมูล (POST/PUT/DELETE): ปุ่มที่กดขึ้นวงหมุนและกดซ้ำไม่ได้ ถ้าเกิน 0.35 วินาที จะขึ้นหน้าต่าง "กำลัง…" บังจอไว้
+// - การโหลดข้อมูล (GET) ที่นานเกิน 1.2 วินาที: แสดงป้ายเล็ก "กำลังโหลดข้อมูล…" มุมจอ โดยไม่บังการใช้งาน
+const ACTION_TEXT = [
+  [/\/issue$/, 'กำลังออกเลข…'], [/\/reserve$/, 'กำลังจองเลข…'], [/\/sign$/, 'กำลังบันทึกลายมือชื่อ…'],
+  [/\/cancel$/, 'กำลังยกเลิกเลข…'], [/^\/api\/entries\/\d+$/, 'กำลังบันทึกรายละเอียด…'],
+  [/\/login$/, 'กำลังเข้าสู่ระบบ…'], [/\/logout$/, 'กำลังออกจากระบบ…'], [/\/register$/, 'กำลังส่งคำขอสมัคร…'],
+  [/\/setup$/, 'กำลังตั้งค่าระบบครั้งแรก…'], [/\/unlock$/, 'กำลังตรวจสอบ PIN…'], [/\/lock$/, 'กำลังล็อกผู้ดูแล…'],
+  [/\/admin\/users\//, 'กำลังบันทึกข้อมูลสมาชิก…'], [/\/admin\/books/, 'กำลังบันทึกสมุด…'],
+  [/\/telegram\/test$/, 'กำลังทดสอบส่งข้อความ…'], [/\/telegram\/daily$/, 'กำลังส่งสรุปเข้า Telegram…'], [/\/telegram\/detect$/, 'กำลังค้นหาแชท…'],
+  [/\/triggers$/, 'กำลังติดตั้งตัวตั้งเวลา…'], [/\/update\/check$/, 'กำลังตรวจสอบอัพเดต…'], [/\/update\/apply$/, 'กำลังติดตั้งอัพเดต…'],
+  [/\/backup$/, 'กำลังสร้างสำเนาสำรอง…'], [/\/me\/prefs$/, null], [/\/admin\/pin$/, 'กำลังเปลี่ยน PIN…'],
+];
+const QUIET = [/\/api\/badges$/, /\/api\/me\/prefs$/]; // งานเบื้องหลัง ไม่ต้องแจ้งผู้ใช้
+let inflight = 0, writes = 0, lastBtn = null, lastBtnAt = 0, waitEl = null, pillEl = null, barEl = null;
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('button, .btn');
+  if (b) { lastBtn = b; lastBtnAt = Date.now(); }
+}, true);
+document.addEventListener('submit', (e) => {
+  const b = e.target.querySelector('button[type=submit], button:not([type])');
+  if (b) { lastBtn = b; lastBtnAt = Date.now(); }
+}, true);
+
+function bar(on) {
+  if (!barEl) { barEl = h('div', { class: 'net-bar' }); document.body.append(barEl); }
+  barEl.classList.toggle('on', on);
+}
+function showWait(text) {
+  if (!waitEl) {
+    waitEl = h('div', { class: 'wait-ov', role: 'alertdialog', 'aria-live': 'assertive', 'aria-busy': 'true' },
+      h('div', { class: 'wait-card glass' }, h('div', { class: 'spinner' }), h('b', { class: 'wait-t' }), h('small', { class: 'wait-s' })));
+    document.body.append(waitEl);
+  }
+  waitEl.querySelector('.wait-t').textContent = text;
+  waitEl.querySelector('.wait-s').textContent = 'กรุณารอสักครู่ ไม่ต้องกดซ้ำ';
+  waitEl.classList.add('on');
+  clearTimeout(waitEl._slow);
+  waitEl._slow = setTimeout(() => {
+    waitEl.querySelector('.wait-s').textContent = GAS ? 'Google กำลังประมวลผล อาจใช้เวลาสักครู่ — ระบบยังทำงานอยู่ ไม่ต้องกดซ้ำ' : 'ระบบยังทำงานอยู่ ไม่ต้องกดซ้ำ';
+  }, 5000);
+}
+function hideWait() { if (waitEl) { waitEl.classList.remove('on'); clearTimeout(waitEl._slow); } }
+function pill(on) {
+  if (!pillEl) { pillEl = h('div', { class: 'load-pill glass' }, h('i', { class: 'spinner sm' }), 'กำลังโหลดข้อมูล…'); document.body.append(pillEl); }
+  pillEl.classList.toggle('on', on);
+}
+
+async function track(method, path, run, label) {
+  const quiet = QUIET.some((r) => r.test(path.split('?')[0]));
+  if (quiet) return run();
+  const write = method !== 'GET' || !!label;
+  const p = path.split('?')[0];
+  const text = label || (ACTION_TEXT.find(([r]) => r.test(p)) || [, 'กำลังบันทึกข้อมูล…'])[1] || 'กำลังบันทึกข้อมูล…';
+  inflight++; bar(true);
+  let btn = null, timer;
+  if (write) {
+    writes++;
+    if (lastBtn && Date.now() - lastBtnAt < 1500 && lastBtn.isConnected && !lastBtn.classList.contains('is-loading')) {
+      btn = lastBtn;
+      btn.classList.add('is-loading');
+      btn.disabled = true;
+    }
+    timer = setTimeout(() => showWait(text), 350);
+  } else {
+    timer = setTimeout(() => pill(true), 1200);
+  }
+  try {
+    return await run();
+  } finally {
+    clearTimeout(timer);
+    inflight--;
+    if (write) { writes--; if (!writes) hideWait(); }
+    if (!inflight) { bar(false); pill(false); }
+    if (btn) { btn.classList.remove('is-loading'); btn.disabled = false; }
+  }
+}
+
+export function api(path, opts = {}) {
+  return track(opts.method || 'GET', path, () => rawApi(path, opts));
 }
 
 // ---------------- toast ----------------

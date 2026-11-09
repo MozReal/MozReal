@@ -102,7 +102,7 @@ if (require.main === module) {
     if (req.url === '/__gas') {
       let b = '';
       req.on('data', (c) => (b += c));
-      req.on('end', () => { const out = ctx.api(...JSON.parse(b)); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out)); });
+      req.on('end', () => setTimeout(() => { const out = ctx.api(...JSON.parse(b)); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out)); }, +process.env.GAS_MOCK_DELAY || 0));
       return;
     }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
